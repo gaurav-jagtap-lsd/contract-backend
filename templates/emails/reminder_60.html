@@ -1,0 +1,37 @@
+{% extends "emails/base_email.html" %}
+{% block content %}
+<span class="badge badge-yellow">⏰ {{ days_remaining }} days remaining</span>
+<div class="contract-card">
+  <h2>{{ contract_name }}</h2>
+  <p class="client">{{ client_name }}{% if vendor_name %} · {{ vendor_name }}{% endif %}</p>
+  <div class="field-grid">
+    <div class="field">
+      <div class="field-label">Expiry Date</div>
+      <div class="field-value">{{ end_date }}</div>
+    </div>
+    <div class="field">
+      <div class="field-label">Days Remaining</div>
+      <div class="field-value">{{ days_remaining }} days</div>
+    </div>
+    {% if notice_period %}
+    <div class="field">
+      <div class="field-label">Notice Period</div>
+      <div class="field-value">{{ notice_period }}</div>
+    </div>
+    {% endif %}
+    {% if renewal_clause %}
+    <div class="field">
+      <div class="field-label">Renewal Clause</div>
+      <div class="field-value">{{ renewal_clause|truncatechars:80 }}</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+<p style="color:#555;font-size:14px;line-height:1.6;">
+  This contract is expiring in <strong>{{ days_remaining }} days</strong>. 
+  Please review the renewal terms and take action before the notice period deadline.
+</p>
+<div class="cta">
+  <a href="{{ frontend_url }}/contracts/{{ contract_id }}">Review Contract →</a>
+</div>
+{% endblock %}

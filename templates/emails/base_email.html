@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body { margin: 0; padding: 0; background: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .wrapper { max-width: 600px; margin: 40px auto; background: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .header { background: #1a1a2e; padding: 28px 32px; }
+  .header h1 { margin: 0; color: #ffffff; font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+  .header p { margin: 4px 0 0; color: #8888aa; font-size: 13px; }
+  .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-bottom: 20px; }
+  .badge-red { background: #fde8e8; color: #b91c1c; }
+  .badge-yellow { background: #fef9c3; color: #854d0e; }
+  .badge-gray { background: #f3f4f6; color: #374151; }
+  .body { padding: 32px; }
+  .contract-card { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 20px 24px; margin-bottom: 24px; }
+  .contract-card h2 { margin: 0 0 4px; font-size: 18px; color: #1a1a2e; font-weight: 600; }
+  .contract-card .client { margin: 0 0 16px; color: #666; font-size: 14px; }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .field { }
+  .field-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #888; font-weight: 500; margin-bottom: 2px; }
+  .field-value { font-size: 14px; color: #1a1a2e; font-weight: 500; }
+  .cta { text-align: center; margin: 28px 0; }
+  .cta a { display: inline-block; background: #1a1a2e; color: #ffffff; text-decoration: none; padding: 12px 32px; border-radius: 6px; font-size: 14px; font-weight: 600; }
+  .footer { background: #f8f9fa; border-top: 1px solid #e9ecef; padding: 20px 32px; text-align: center; }
+  .footer p { margin: 0; color: #888; font-size: 12px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+  <div class="header">
+    <h1>ContractVault AI</h1>
+    <p>Contract Renewal Management</p>
+  </div>
+  <div class="body">
+    {% block content %}{% endblock %}
+  </div>
+  <div class="footer">
+    <p>This is an automated reminder from ContractVault AI.<br>
+    To manage your notification preferences, <a href="{{ frontend_url }}/contracts/{{ contract_id }}">open the contract</a>.</p>
+  </div>
+</div>
+</body>
+</html>

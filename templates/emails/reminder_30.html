@@ -1,0 +1,36 @@
+{% extends "emails/base_email.html" %}
+{% block content %}
+<span class="badge badge-red">🔴 URGENT — {{ days_remaining }} days remaining</span>
+<div class="contract-card" style="border-color:#fca5a5;">
+  <h2>{{ contract_name }}</h2>
+  <p class="client">{{ client_name }}{% if vendor_name %} · {{ vendor_name }}{% endif %}</p>
+  <div class="field-grid">
+    <div class="field">
+      <div class="field-label">Expiry Date</div>
+      <div class="field-value" style="color:#b91c1c;font-weight:700;">{{ end_date }}</div>
+    </div>
+    <div class="field">
+      <div class="field-label">Days Remaining</div>
+      <div class="field-value" style="color:#b91c1c;font-weight:700;">{{ days_remaining }} days</div>
+    </div>
+    {% if notice_period %}
+    <div class="field">
+      <div class="field-label">Notice Period</div>
+      <div class="field-value">{{ notice_period }}</div>
+    </div>
+    {% endif %}
+    {% if renewal_clause %}
+    <div class="field">
+      <div class="field-label">Renewal Clause</div>
+      <div class="field-value">{{ renewal_clause|truncatechars:80 }}</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+<p style="color:#b91c1c;font-size:14px;font-weight:600;background:#fde8e8;padding:12px 16px;border-radius:6px;">
+  ⚠️ Immediate action required. This contract expires in {{ days_remaining }} days.
+</p>
+<div class="cta">
+  <a href="{{ frontend_url }}/contracts/{{ contract_id }}" style="background:#b91c1c;">Renew Now →</a>
+</div>
+{% endblock %}

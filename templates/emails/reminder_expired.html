@@ -1,0 +1,25 @@
+{% extends "emails/base_email.html" %}
+{% block content %}
+<span class="badge badge-gray">⛔ CONTRACT EXPIRED</span>
+<div class="contract-card" style="border-color:#d1d5db;background:#f9fafb;">
+  <h2 style="color:#6b7280;">{{ contract_name }}</h2>
+  <p class="client">{{ client_name }}{% if vendor_name %} · {{ vendor_name }}{% endif %}</p>
+  <div class="field-grid">
+    <div class="field">
+      <div class="field-label">Expired On</div>
+      <div class="field-value" style="color:#6b7280;">{{ end_date }}</div>
+    </div>
+    <div class="field">
+      <div class="field-label">Status</div>
+      <div class="field-value" style="color:#6b7280;">Expired</div>
+    </div>
+  </div>
+</div>
+<p style="color:#555;font-size:14px;line-height:1.6;">
+  This contract has <strong>expired</strong>. Please renew it or archive it in ContractVault AI 
+  to stop receiving these notifications.
+</p>
+<div class="cta">
+  <a href="{{ frontend_url }}/contracts/{{ contract_id }}" style="background:#374151;">View &amp; Renew →</a>
+</div>
+{% endblock %}

@@ -1,0 +1,15 @@
+venv
+.venv
+__pycache__
+**/__pycache__
+*.py[cod]
+*.sqlite3
+.git
+.gitignore
+.env
+*.md
+staticfiles
+.cursor
+.idea
+.vscode
+{contractvault_api,apps
