@@ -17,6 +17,15 @@ from datetime import datetime, timezone, timedelta
 logger = logging.getLogger(__name__)
 
 CONTRACT_STATUSES = ("active", "paused", "expiring_soon", "expired", "renewed", "archived")
+PIPELINE_STEPS = (
+    "Initiated",
+    "Commercial Shared",
+    "Negotiation",
+    "Approval",
+    "SOW/Draft shared",
+    "Signed",
+)
+DEFAULT_PIPELINE_STEP = "Initiated"
 
 
 import re
@@ -69,6 +78,70 @@ def _resolve_status(contract: dict) -> str:
     return "active"
 
 
+def _search_haystack(contract: dict, client: dict | None = None) -> str:
+    """Flatten searchable contract (and optional client) fields into one string."""
+    parts: list[str] = []
+
+    for key in (
+        "contract_name",
+        "vendor_name",
+        "service_name",
+        "service_type",
+        "client_name",
+        "notes",
+        "file_name",
+        "status",
+        "pipeline_step",
+    ):
+        val = contract.get(key)
+        if val:
+            parts.append(str(val))
+
+    computed = contract.get("computed_status") or ""
+    if computed:
+        parts.append(str(computed))
+        parts.append(str(computed).replace("_", " "))
+
+    emails = contract.get("email_ids") or []
+    if isinstance(emails, list):
+        parts.extend(str(e) for e in emails if e)
+    elif emails:
+        parts.append(str(emails))
+
+    for service in contract.get("services") or []:
+        if not isinstance(service, dict):
+            continue
+        for skey in ("service_name", "service_type", "description"):
+            sval = service.get(skey)
+            if sval:
+                parts.append(str(sval))
+
+    if client:
+        for key in (
+            "client_name",
+            "account_manager",
+            "primary_reminder_email",
+            "secondary_reminder_email",
+        ):
+            val = client.get(key)
+            if val:
+                parts.append(str(val))
+        cc_emails = client.get("cc_emails") or []
+        if isinstance(cc_emails, list):
+            parts.extend(str(e) for e in cc_emails if e)
+
+    return " ".join(parts).lower()
+
+
+def _contract_matches_search(contract: dict, term: str, client: dict | None = None) -> bool:
+    """Return True if every whitespace-separated search token appears in the haystack."""
+    tokens = [t for t in (term or "").strip().lower().split() if t]
+    if not tokens:
+        return True
+    haystack = _search_haystack(contract, client)
+    return all(token in haystack for token in tokens)
+
+
 class ContractListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -76,6 +149,11 @@ class ContractListCreateView(APIView):
         uid = request.user.uid
         status_filter = request.query_params.get("status")
         client_filter = request.query_params.get("client_id")
+        search_term = (
+            request.query_params.get("search")
+            or request.query_params.get("q")
+            or ""
+        ).strip()
 
         filters = [("owner_uid", "==", uid), ("is_deleted", "==", False)]
         if client_filter:
@@ -86,6 +164,14 @@ class ContractListCreateView(APIView):
             order_by="created_at", direction="DESCENDING",
         )
 
+        client_by_id: dict = {}
+        if search_term:
+            clients = query_collection(
+                CLIENTS_COL,
+                filters=[("owner_uid", "==", uid), ("is_deleted", "==", False)],
+            )
+            client_by_id = {cl["id"]: cl for cl in clients}
+
         # Enrich with live status and days remaining
         result = []
         for c in contracts:
@@ -93,6 +179,12 @@ class ContractListCreateView(APIView):
             c["computed_status"] = _resolve_status(c)
             if status_filter and c["computed_status"] != status_filter:
                 continue
+            if search_term and not _contract_matches_search(
+                c, search_term, client_by_id.get(c.get("client_id"))
+            ):
+                continue
+            if not c.get("pipeline_step"):
+                c["pipeline_step"] = DEFAULT_PIPELINE_STEP
             result.append(serialize_firestore_doc(c))
 
         return success_response(data={"contracts": result, "total": len(result)})
@@ -170,6 +262,11 @@ class ContractListCreateView(APIView):
             "parent_contract_id": None,
             "is_deleted": False,
             "notes": data.get("notes", ""),
+            "pipeline_step": (
+                data.get("pipeline_step")
+                if data.get("pipeline_step") in PIPELINE_STEPS
+                else DEFAULT_PIPELINE_STEP
+            ),
         }
 
         contract = create_doc(CONTRACTS_COL, payload)
@@ -204,6 +301,8 @@ class ContractDetailView(APIView):
             return error_response("Contract not found.", 404)
         contract["days_remaining"] = _calculate_days_remaining(contract.get("end_date"))
         contract["computed_status"] = _resolve_status(contract)
+        if not contract.get("pipeline_step"):
+            contract["pipeline_step"] = DEFAULT_PIPELINE_STEP
 
         # Get signed URL if file exists
         if contract.get("storage_path"):
@@ -225,11 +324,14 @@ class ContractDetailView(APIView):
             "start_date", "end_date", "effective_date", "agreement_date",
             "scope_date", "schedule_date", "annexure_date", "execution_date",
             "lock_in_period", "renewal_clause", "notice_period",
-            "email_ids", "services", "notes",
+            "email_ids", "services", "notes", "pipeline_step",
         ]
         updates = {k: v for k, v in request.data.items() if k in editable_fields}
         if not updates:
             return error_response("No valid fields to update.")
+
+        if "pipeline_step" in updates and updates["pipeline_step"] not in PIPELINE_STEPS:
+            return error_response("Invalid pipeline_step.")
 
         if "client_id" in updates and updates["client_id"] != contract.get("client_id"):
             client = get_doc(CLIENTS_COL, updates["client_id"])
@@ -562,151 +664,6 @@ class ContractFileUrlView(APIView):
             return error_response("File not found in storage.", 404)
 
         return success_response(data={"url": url, "expires_in_seconds": 7200})
-
-
-class ContractPHApprovalView(APIView):
-    """
-    Record a PH (Provisional/Head) approval for a contract.
-    Accepts either a screenshot image file or marks a mail approval.
-    Starts the 30-day countdown for the main contract upload.
-    """
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, contract_id):
-        uid = request.user.uid
-        contract = get_doc(CONTRACTS_COL, contract_id)
-        if not contract or contract.get("owner_uid") != uid or contract.get("is_deleted"):
-            return error_response("Contract not found.", 404)
-
-        approval_type = request.data.get("ph_approval_type", "").strip()
-        if approval_type not in ("screenshot", "mail"):
-            return error_response("ph_approval_type must be 'screenshot' or 'mail'.")
-
-        updates = {
-            "ph_approved": True,
-            "ph_approved_at": now_utc().isoformat(),
-            "ph_approval_type": approval_type,
-        }
-
-        ph_image_url = None
-
-        # Handle screenshot upload
-        if approval_type == "screenshot":
-            image_file = request.FILES.get("ph_approval_image")
-            if not image_file:
-                return error_response("ph_approval_image file is required for screenshot approval.")
-            try:
-                result = upload_contract_file(image_file, uid, contract_id=contract_id)
-                updates["ph_approval_image_path"] = result["storage_path"]
-                updates["ph_approval_image_name"] = result["file_name"]
-                ph_image_url = result.get("signed_url")
-            except ValueError as exc:
-                return error_response(str(exc), 400)
-            except Exception as exc:
-                logger.error(f"PH approval image upload error: {exc}")
-                return error_response("Image upload failed.", 500)
-
-        # Optionally store the email body pasted by user
-        email_body = request.data.get("ph_approval_email_body", "").strip()
-        if email_body:
-            updates["ph_approval_email_body"] = email_body
-
-        update_doc(CONTRACTS_COL, contract_id, updates)
-
-
-        log_action(
-            user_uid=uid,
-            action="PH_APPROVAL",
-            resource_type="contract",
-            resource_id=contract_id,
-            description=f"PH approval recorded ({approval_type}) for: {contract.get('contract_name')}",
-            ip_address=get_client_ip(request),
-        )
-
-        response_data = {
-            "ph_approved": True,
-            "ph_approved_at": updates["ph_approved_at"],
-            "ph_approval_type": approval_type,
-        }
-        if ph_image_url:
-            response_data["ph_approval_image_url"] = ph_image_url
-
-        return success_response(data=response_data, message="PH approval recorded. 30-day upload timer started.")
-
-    def delete(self, request, contract_id):
-        """Remove PH approval (undo)."""
-        uid = request.user.uid
-        contract = get_doc(CONTRACTS_COL, contract_id)
-        if not contract or contract.get("owner_uid") != uid or contract.get("is_deleted"):
-            return error_response("Contract not found.", 404)
-
-        update_doc(CONTRACTS_COL, contract_id, {
-            "ph_approved": False,
-            "ph_approved_at": None,
-            "ph_approval_type": "",
-            "ph_approval_image_path": "",
-            "ph_approval_image_name": "",
-        })
-        return success_response(message="PH approval removed.")
-
-
-class ContractMainContractUploadView(APIView):
-    """
-    Mark the main (final signed) contract as uploaded, ending the 30-day PH timer.
-    Optionally accepts a new file to replace/link as the main contract file.
-    """
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, contract_id):
-        uid = request.user.uid
-        contract = get_doc(CONTRACTS_COL, contract_id)
-        if not contract or contract.get("owner_uid") != uid or contract.get("is_deleted"):
-            return error_response("Contract not found.", 404)
-
-        if not contract.get("ph_approved"):
-            return error_response("Contract does not have a PH approval recorded yet.")
-
-        updates = {
-            "main_contract_uploaded": True,
-            "main_contract_uploaded_at": now_utc().isoformat(),
-        }
-
-        # Optionally accept a new file to replace/link as the main contract
-        new_file = request.FILES.get("file")
-        if new_file:
-            try:
-                result = upload_contract_file(new_file, uid, contract_id=contract_id)
-                updates["storage_path"] = result["storage_path"]
-                updates["file_name"] = result["file_name"]
-                log_action(
-                    user_uid=uid,
-                    action="UPLOAD",
-                    resource_type="file",
-                    resource_id=result["storage_path"],
-                    description=f"Main contract file uploaded: {result['file_name']}",
-                    ip_address=get_client_ip(request),
-                )
-            except ValueError as exc:
-                return error_response(str(exc), 400)
-            except Exception as exc:
-                logger.error(f"Main contract file upload error: {exc}")
-                return error_response("File upload failed.", 500)
-        elif request.data.get("storage_path"):
-            updates["storage_path"] = request.data.get("storage_path")
-            updates["file_name"] = request.data.get("file_name", "")
-
-        update_doc(CONTRACTS_COL, contract_id, updates)
-
-        log_action(
-            user_uid=uid,
-            action="UPLOAD",
-            resource_type="contract",
-            resource_id=contract_id,
-            description=f"Main contract uploaded for: {contract.get('contract_name')}",
-            ip_address=get_client_ip(request),
-        )
-
-        return success_response(message="Main contract marked as uploaded. 30-day timer cleared.")
 
 
 # ─── Universal Contract Comments ─────────────────────────────────────────────

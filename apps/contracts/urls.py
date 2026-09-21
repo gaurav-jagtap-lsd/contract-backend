@@ -12,7 +12,5 @@ urlpatterns = [
     path("<str:contract_id>/renew/", views.ContractRenewView.as_view(), name="contract-renew"),
     path("<str:contract_id>/versions/", views.ContractVersionHistoryView.as_view(), name="contract-versions"),
     path("<str:contract_id>/file-url/", views.ContractFileUrlView.as_view(), name="contract-file-url"),
-    path("<str:contract_id>/ph-approval/", views.ContractPHApprovalView.as_view(), name="contract-ph-approval"),
-    path("<str:contract_id>/main-contract/", views.ContractMainContractUploadView.as_view(), name="contract-main-contract"),
     path("<str:contract_id>/comments/", views.ContractCommentsView.as_view(), name="contract-comments"),
 ]
