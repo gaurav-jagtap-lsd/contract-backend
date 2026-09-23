@@ -27,6 +27,7 @@ PIPELINE_STEPS = (
     "Signed",
 )
 DEFAULT_PIPELINE_STEP = "Initiated"
+CONTRACT_COMMENTS_COL = "contract_comments"
 
 
 def _person(directory: dict, uid: str, stored: str = "") -> str:
@@ -206,6 +207,11 @@ class ContractListCreateView(APIView):
             client_by_id = {cl["id"]: cl for cl in clients}
 
         directory = user_directory()
+        comment_counts: dict[str, int] = {}
+        for comment in query_collection(CONTRACT_COMMENTS_COL):
+            contract_id = comment.get("contract_id")
+            if contract_id:
+                comment_counts[contract_id] = comment_counts.get(contract_id, 0) + 1
         # Enrich with live status and days remaining
         result = []
         for c in contracts:
@@ -219,6 +225,7 @@ class ContractListCreateView(APIView):
                 continue
             if not c.get("pipeline_step"):
                 c["pipeline_step"] = DEFAULT_PIPELINE_STEP
+            c["comment_count"] = comment_counts.get(c.get("id"), 0)
             _annotate_contract(c, directory)
             result.append(serialize_firestore_doc(c))
 
@@ -741,8 +748,6 @@ class ContractFileUrlView(APIView):
 
 
 # ─── Universal Contract Comments ─────────────────────────────────────────────
-
-CONTRACT_COMMENTS_COL = "contract_comments"
 
 
 class ContractCommentsView(APIView):
