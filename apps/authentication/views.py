@@ -5,8 +5,15 @@ from rest_framework import status
 from firebase_admin import auth as firebase_auth
 from core.firebase import get_firebase_app, get_firestore_client
 from core.exceptions import success_response, error_response
+from core.roles import (
+    assign_role,
+    ensure_user_profile,
+    protected_admin_emails,
+    require,
+    sync_bootstrap_accounts,
+)
 from core.audit_service import log_action, get_client_ip, ACTIONS
-from core.firestore_utils import get_doc, set_doc, USERS_COL
+from core.firestore_utils import get_doc, set_doc, query_collection, serialize_firestore_doc, USERS_COL
 import requests
 import logging
 
@@ -40,9 +47,11 @@ class RegisterView(APIView):
                 "uid": user.uid,
                 "email": email,
                 "display_name": display_name,
-                "role": "admin",
+                "role": "viewer",
                 "is_active": True,
+                "role_customized": False,
             })
+            ensure_user_profile(user.uid, email, display_name)
 
             log_action(
                 user_uid=user.uid,
@@ -83,20 +92,12 @@ class LoginView(APIView):
             decoded = firebase_auth.verify_id_token(id_token)
             uid = decoded["uid"]
 
-            user_profile = get_doc(USERS_COL, uid)
-            if not user_profile:
-                firebase_user = firebase_auth.get_user(uid)
-                user_profile = {
-                    "uid": uid,
-                    "email": decoded.get("email", ""),
-                    "display_name": display_name or firebase_user.display_name or "",
-                    "role": "admin",
-                    "is_active": True,
-                }
-                set_doc(USERS_COL, uid, user_profile)
-            elif display_name and not user_profile.get("display_name"):
-                user_profile["display_name"] = display_name
-                set_doc(USERS_COL, uid, user_profile)
+            user_profile = ensure_user_profile(
+                uid,
+                decoded.get("email", ""),
+                display_name,
+            )
+            sync_bootstrap_accounts()
 
             log_action(
                 user_uid=uid,
@@ -138,10 +139,57 @@ class MeView(APIView):
 
     def get(self, request):
         uid = request.user.uid
-        user_profile = get_doc(USERS_COL, uid)
+        user_profile = ensure_user_profile(uid, request.user.email or "")
         if not user_profile:
             return error_response("User profile not found.", 404)
         return success_response(data={"user": user_profile})
+
+
+class UserListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        denied = require(request, "manage_users")
+        if denied:
+            return denied
+        sync_bootstrap_accounts()
+        users = query_collection(USERS_COL)
+        cleaned = []
+        protected = protected_admin_emails()
+        for user in users:
+            email = (user.get("email") or "").strip().lower()
+            cleaned.append(serialize_firestore_doc({
+                "uid": user.get("uid") or user.get("id"),
+                "email": user.get("email", ""),
+                "display_name": user.get("display_name", ""),
+                "role": user.get("role") or "viewer",
+                "is_active": user.get("is_active", True),
+                "protected": email in protected,
+            }))
+        cleaned.sort(key=lambda item: (item.get("email") or "").lower())
+        return success_response(data={"users": cleaned})
+
+
+class UserRoleView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, uid):
+        denied = require(request, "manage_users")
+        if denied:
+            return denied
+        new_role = (request.data.get("role") or "").strip().lower()
+        failed = assign_role(request.user.email, request.user.uid, uid, new_role)
+        if failed:
+            return failed
+        log_action(
+            user_uid=request.user.uid,
+            action=ACTIONS["EDIT"],
+            resource_type="user",
+            resource_id=uid,
+            description=f"Set role to {new_role}",
+            ip_address=get_client_ip(request),
+        )
+        return success_response(message="Role updated.")
 
 
 class SendPasswordResetView(APIView):
@@ -193,15 +241,7 @@ def _register_existing_user(email: str, password: str, display_name: str):
     if display_name and not existing.display_name:
         firebase_auth.update_user(existing.uid, display_name=display_name)
 
-    profile = get_doc(USERS_COL, existing.uid)
-    if not profile:
-        set_doc(USERS_COL, existing.uid, {
-            "uid": existing.uid,
-            "email": email,
-            "display_name": display_name or existing.display_name or "",
-            "role": "admin",
-            "is_active": True,
-        })
+    ensure_user_profile(existing.uid, email, display_name or existing.display_name or "")
 
     return success_response(
         data={"uid": existing.uid, "email": email},

@@ -24,11 +24,11 @@ class DashboardSummaryView(APIView):
     def get(self, request):
         uid = request.user.uid
 
-        clients = query_collection(CLIENTS_COL, filters=[
-            ("owner_uid", "==", uid), ("is_deleted", "==", False)
-        ])
         contracts = query_collection(CONTRACTS_COL, filters=[
-            ("owner_uid", "==", uid), ("is_deleted", "==", False)
+            ("is_deleted", "==", False)
+        ])
+        clients = query_collection(CLIENTS_COL, filters=[
+            ("is_deleted", "==", False)
         ])
 
         total_clients = len(clients)
@@ -70,7 +70,7 @@ class DashboardChartsView(APIView):
     def get(self, request):
         uid = request.user.uid
         contracts = query_collection(CONTRACTS_COL, filters=[
-            ("owner_uid", "==", uid), ("is_deleted", "==", False)
+            ("is_deleted", "==", False)
         ])
 
         # Monthly expiry trend (next 12 months)
@@ -125,7 +125,7 @@ class CalendarView(APIView):
         month = request.query_params.get("month", str(datetime.now().month))
 
         contracts = query_collection(CONTRACTS_COL, filters=[
-            ("owner_uid", "==", uid), ("is_deleted", "==", False)
+            ("is_deleted", "==", False)
         ])
 
         events = []

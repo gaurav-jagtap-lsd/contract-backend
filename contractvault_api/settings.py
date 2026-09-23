@@ -108,6 +108,13 @@ FIREBASE_CLIENT_ID = os.environ.get("FIREBASE_CLIENT_ID", "")
 FIREBASE_STORAGE_BUCKET = os.environ.get("FIREBASE_STORAGE_BUCKET", "")
 FIREBASE_WEB_API_KEY = os.environ.get("FIREBASE_WEB_API_KEY", "")
 
+# Named accounts. The protected admin cannot be demoted from the team screen.
+BOOTSTRAP_ROLES = {
+    "yashashvi.devadiga@lsdigital.com": "admin",
+    "gaurav.jagtap@lsdigital.com": "editor",
+}
+PROTECTED_ADMIN_EMAILS = ["yashashvi.devadiga@lsdigital.com"]
+
 # Gemini
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 

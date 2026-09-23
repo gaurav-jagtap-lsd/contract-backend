@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from core.exceptions import success_response, error_response
+from core.roles import require
 from core.audit_service import log_action, get_client_ip, ACTIONS
 from core.firestore_utils import (
     create_doc, get_doc, update_doc, delete_doc,
@@ -155,7 +156,7 @@ class ContractListCreateView(APIView):
             or ""
         ).strip()
 
-        filters = [("owner_uid", "==", uid), ("is_deleted", "==", False)]
+        filters = [("is_deleted", "==", False)]
         if client_filter:
             filters.append(("client_id", "==", client_filter))
 
@@ -168,7 +169,7 @@ class ContractListCreateView(APIView):
         if search_term:
             clients = query_collection(
                 CLIENTS_COL,
-                filters=[("owner_uid", "==", uid), ("is_deleted", "==", False)],
+                filters=[("is_deleted", "==", False)],
             )
             client_by_id = {cl["id"]: cl for cl in clients}
 
@@ -190,6 +191,9 @@ class ContractListCreateView(APIView):
         return success_response(data={"contracts": result, "total": len(result)})
 
     def post(self, request):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         data = request.data
 
@@ -217,7 +221,7 @@ class ContractListCreateView(APIView):
 
         # Verify client belongs to this user
         client = get_doc(CLIENTS_COL, data["client_id"])
-        if not client or client.get("owner_uid") != uid or client.get("is_deleted"):
+        if not client or client.get("is_deleted"):
             return error_response("Client not found.", 404)
 
         service_name = data.get("service_name", "").strip()
@@ -290,7 +294,7 @@ class ContractDetailView(APIView):
 
     def _get_or_404(self, contract_id, uid):
         c = get_doc(CONTRACTS_COL, contract_id)
-        if not c or c.get("owner_uid") != uid or c.get("is_deleted"):
+        if not c or c.get("is_deleted"):
             return None
         return c
 
@@ -314,6 +318,9 @@ class ContractDetailView(APIView):
         return success_response(data={"contract": serialize_firestore_doc(contract)})
 
     def patch(self, request, contract_id):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         contract = self._get_or_404(contract_id, uid)
         if not contract:
@@ -335,7 +342,7 @@ class ContractDetailView(APIView):
 
         if "client_id" in updates and updates["client_id"] != contract.get("client_id"):
             client = get_doc(CLIENTS_COL, updates["client_id"])
-            if not client or client.get("owner_uid") != uid or client.get("is_deleted"):
+            if not client or client.get("is_deleted"):
                 return error_response("Client not found.", 404)
             updates["client_name"] = client.get("client_name", "")
 
@@ -378,6 +385,9 @@ class ContractDetailView(APIView):
         return success_response(data={"contract": serialize_firestore_doc(updated)})
 
     def delete(self, request, contract_id):
+        denied = require(request, "delete")
+        if denied:
+            return denied
         uid = request.user.uid
         contract = self._get_or_404(contract_id, uid)
         if not contract:
@@ -400,6 +410,9 @@ class ContractUploadFileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         file = request.FILES.get("file")
         if not file:
@@ -428,9 +441,12 @@ class ContractPauseView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, contract_id):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         contract = get_doc(CONTRACTS_COL, contract_id)
-        if not contract or contract.get("owner_uid") != uid or contract.get("is_deleted"):
+        if not contract or contract.get("is_deleted"):
             return error_response("Contract not found.", 404)
 
         pause_reason = request.data.get("pause_reason", "").strip()
@@ -459,9 +475,12 @@ class ContractResumeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, contract_id):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         contract = get_doc(CONTRACTS_COL, contract_id)
-        if not contract or contract.get("owner_uid") != uid or contract.get("is_deleted"):
+        if not contract or contract.get("is_deleted"):
             return error_response("Contract not found.", 404)
 
         update_doc(CONTRACTS_COL, contract_id, {
@@ -486,9 +505,12 @@ class ContractSnoozeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, contract_id):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         contract = get_doc(CONTRACTS_COL, contract_id)
-        if not contract or contract.get("owner_uid") != uid or contract.get("is_deleted"):
+        if not contract or contract.get("is_deleted"):
             return error_response("Contract not found.", 404)
 
         snooze_days = request.data.get("snooze_days")
@@ -534,9 +556,12 @@ class ContractUnsnoozeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, contract_id):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         contract = get_doc(CONTRACTS_COL, contract_id)
-        if not contract or contract.get("owner_uid") != uid or contract.get("is_deleted"):
+        if not contract or contract.get("is_deleted"):
             return error_response("Contract not found.", 404)
 
         update_doc(CONTRACTS_COL, contract_id, {
@@ -558,9 +583,12 @@ class ContractRenewView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, contract_id):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         old_contract = get_doc(CONTRACTS_COL, contract_id)
-        if not old_contract or old_contract.get("owner_uid") != uid or old_contract.get("is_deleted"):
+        if not old_contract or old_contract.get("is_deleted"):
             return error_response("Contract not found.", 404)
 
         new_end_date = request.data.get("new_end_date")
@@ -630,7 +658,7 @@ class ContractVersionHistoryView(APIView):
     def get(self, request, contract_id):
         uid = request.user.uid
         contract = get_doc(CONTRACTS_COL, contract_id)
-        if not contract or contract.get("owner_uid") != uid:
+        if not contract:
             return error_response("Contract not found.", 404)
 
         versions = query_collection(
@@ -651,7 +679,7 @@ class ContractFileUrlView(APIView):
     def get(self, request, contract_id):
         uid = request.user.uid
         contract = get_doc(CONTRACTS_COL, contract_id)
-        if not contract or contract.get("owner_uid") != uid or contract.get("is_deleted"):
+        if not contract or contract.get("is_deleted"):
             return error_response("Contract not found.", 404)
 
         storage_path = contract.get("storage_path")
@@ -681,7 +709,7 @@ class ContractCommentsView(APIView):
     def get(self, request, contract_id):
         uid = request.user.uid
         contract = get_doc(CONTRACTS_COL, contract_id)
-        if not contract or contract.get("owner_uid") != uid or contract.get("is_deleted"):
+        if not contract or contract.get("is_deleted"):
             return error_response("Contract not found.", 404)
 
         # Single field filter on contract_id to avoid Firestore composite index requirements
@@ -693,7 +721,6 @@ class ContractCommentsView(APIView):
         serialized = [
             serialize_firestore_doc(c)
             for c in comments
-            if c.get("owner_uid") == uid
         ]
         serialized.sort(key=lambda c: str(c.get("created_at") or ""), reverse=True)
 
@@ -704,9 +731,12 @@ class ContractCommentsView(APIView):
 
 
     def post(self, request, contract_id):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         contract = get_doc(CONTRACTS_COL, contract_id)
-        if not contract or contract.get("owner_uid") != uid or contract.get("is_deleted"):
+        if not contract or contract.get("is_deleted"):
             return error_response("Contract not found.", 404)
 
         text = (request.data.get("text") or "").strip()
@@ -748,13 +778,16 @@ class ContractCommentsView(APIView):
 
     def delete(self, request, contract_id):
         """Delete a specific comment by comment_id passed in request body."""
+        denied = require(request, "delete")
+        if denied:
+            return denied
         uid = request.user.uid
         comment_id = request.data.get("comment_id")
         if not comment_id:
             return error_response("comment_id is required.")
 
         comment = get_doc(CONTRACT_COMMENTS_COL, comment_id)
-        if not comment or comment.get("owner_uid") != uid or comment.get("contract_id") != contract_id:
+        if not comment or comment.get("contract_id") != contract_id:
             return error_response("Comment not found.", 404)
 
         delete_doc(CONTRACT_COMMENTS_COL, comment_id)

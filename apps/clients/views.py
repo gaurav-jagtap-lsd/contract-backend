@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from core.exceptions import success_response, error_response
+from core.roles import require
 from core.audit_service import log_action, get_client_ip, ACTIONS
 from core.firestore_utils import (
     create_doc, get_doc, update_doc, delete_doc,
@@ -18,7 +19,7 @@ class ClientListCreateView(APIView):
         uid = request.user.uid
         clients = query_collection(
             CLIENTS_COL,
-            filters=[("owner_uid", "==", uid), ("is_deleted", "==", False)],
+            filters=[("is_deleted", "==", False)],
             order_by="created_at",
             direction="DESCENDING",
         )
@@ -27,6 +28,9 @@ class ClientListCreateView(APIView):
         return success_response(data={"clients": clients, "total": len(clients)})
 
     def post(self, request):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         data = request.data
 
@@ -75,7 +79,7 @@ class ClientDetailView(APIView):
 
     def _get_client_or_404(self, client_id, uid):
         client = get_doc(CLIENTS_COL, client_id)
-        if not client or client.get("owner_uid") != uid or client.get("is_deleted"):
+        if not client or client.get("is_deleted"):
             return None
         return client
 
@@ -88,6 +92,9 @@ class ClientDetailView(APIView):
         return success_response(data={"client": serialize_firestore_doc(client)})
 
     def patch(self, request, client_id):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         client = self._get_client_or_404(client_id, uid)
         if not client:
@@ -120,6 +127,9 @@ class ClientDetailView(APIView):
         return success_response(data={"client": serialize_firestore_doc(updated)})
 
     def delete(self, request, client_id):
+        denied = require(request, "delete")
+        if denied:
+            return denied
         uid = request.user.uid
         client = self._get_client_or_404(client_id, uid)
         if not client:
@@ -142,9 +152,12 @@ class ClientPauseView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, client_id):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         client = get_doc(CLIENTS_COL, client_id)
-        if not client or client.get("owner_uid") != uid or client.get("is_deleted"):
+        if not client or client.get("is_deleted"):
             return error_response("Client not found.", 404)
 
         pause_reason = request.data.get("pause_reason", "").strip()
@@ -185,9 +198,12 @@ class ClientResumeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, client_id):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         client = get_doc(CLIENTS_COL, client_id)
-        if not client or client.get("owner_uid") != uid or client.get("is_deleted"):
+        if not client or client.get("is_deleted"):
             return error_response("Client not found.", 404)
 
         update_doc(CLIENTS_COL, client_id, {
@@ -223,7 +239,7 @@ class ClientEmailsView(APIView):
     def get(self, request, client_id):
         uid = request.user.uid
         client = get_doc(CLIENTS_COL, client_id)
-        if not client or client.get("owner_uid") != uid or client.get("is_deleted"):
+        if not client or client.get("is_deleted"):
             return error_response("Client not found.", 404)
 
         return success_response(data={

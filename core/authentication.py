@@ -2,16 +2,19 @@ from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 from firebase_admin import auth as firebase_auth
 from core.firebase import get_firebase_app
+from core.roles import resolve_role
+from core.firestore_utils import USERS_COL, get_doc
 
 
 class FirebaseUser:
     """Lightweight user object populated from the verified Firebase token."""
 
-    def __init__(self, decoded_token: dict):
+    def __init__(self, decoded_token: dict, role: str = "viewer"):
         self.uid = decoded_token["uid"]
         self.email = decoded_token.get("email", "")
         self.email_verified = decoded_token.get("email_verified", False)
         self.decoded_token = decoded_token
+        self.role = role if role in ("admin", "editor", "viewer") else "viewer"
         self.is_authenticated = True
         self.is_active = True
 
@@ -41,7 +44,10 @@ class FirebaseAuthentication(BaseAuthentication):
         except Exception as exc:
             raise AuthenticationFailed(f"Authentication failed: {str(exc)}")
 
-        user = FirebaseUser(decoded_token)
+        user = FirebaseUser(
+            decoded_token,
+            resolve_role(decoded_token.get("email", ""), get_doc(USERS_COL, decoded_token["uid"])),
+        )
         return (user, token)
 
     def authenticate_header(self, request):

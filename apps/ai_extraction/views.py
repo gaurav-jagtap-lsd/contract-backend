@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from core.exceptions import success_response, error_response
+from core.roles import require
 from core.storage_service import upload_contract_file, download_file_bytes
 from core.audit_service import log_action, get_client_ip, ACTIONS
 from .gemini_service import (
@@ -28,6 +29,9 @@ class ExtractContractView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         file = request.FILES.get("file")
 
@@ -103,6 +107,9 @@ class ReExtractView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        denied = require(request, "write")
+        if denied:
+            return denied
         uid = request.user.uid
         storage_path = request.data.get("storage_path", "").strip()
         if not storage_path:
