@@ -20,8 +20,12 @@ class ClientListCreateView(APIView):
         clients = query_collection(
             CLIENTS_COL,
             filters=[("is_deleted", "==", False)],
-            order_by="created_at",
-            direction="DESCENDING",
+        )
+        clients.sort(
+            key=lambda c: c.get("created_at").isoformat()
+            if hasattr(c.get("created_at"), "isoformat")
+            else str(c.get("created_at") or ""),
+            reverse=True,
         )
         from core.firestore_utils import serialize_firestore_doc
         clients = [serialize_firestore_doc(c) for c in clients]

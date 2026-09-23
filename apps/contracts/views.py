@@ -156,13 +156,18 @@ class ContractListCreateView(APIView):
             or ""
         ).strip()
 
-        filters = [("is_deleted", "==", False)]
-        if client_filter:
-            filters.append(("client_id", "==", client_filter))
-
+        # Equality on is_deleted plus order_by created_at needs a composite
+        # index this project does not have. Filter and sort in memory instead.
         contracts = query_collection(
-            CONTRACTS_COL, filters=filters,
-            order_by="created_at", direction="DESCENDING",
+            CONTRACTS_COL, filters=[("is_deleted", "==", False)],
+        )
+        if client_filter:
+            contracts = [c for c in contracts if c.get("client_id") == client_filter]
+        contracts.sort(
+            key=lambda c: c.get("created_at").isoformat()
+            if hasattr(c.get("created_at"), "isoformat")
+            else str(c.get("created_at") or ""),
+            reverse=True,
         )
 
         client_by_id: dict = {}
