@@ -59,7 +59,7 @@ class RegisterView(APIView):
                 status_code=201,
             )
         except firebase_auth.EmailAlreadyExistsError:
-            return error_response("An account with this email already exists.", 409)
+            return _register_existing_user(email, password, display_name)
         except Exception as exc:
             logger.error(f"Registration error: {exc}")
             return error_response("Registration failed. Please try again.", 500)
@@ -172,6 +172,55 @@ class SendPasswordResetView(APIView):
             return success_response(
                 message="If an account exists with this email, a reset link has been sent."
             )
+
+
+def _register_existing_user(email: str, password: str, display_name: str):
+    """A previous attempt may have created the Firebase user before the form finished.
+
+    If this password matches that account, finish the profile and let the client sign in.
+    """
+    if not _password_matches(email, password):
+        return error_response(
+            "An account with this email already exists. Sign in instead.",
+            409,
+        )
+
+    existing = firebase_auth.get_user_by_email(email)
+    if display_name and not existing.display_name:
+        firebase_auth.update_user(existing.uid, display_name=display_name)
+
+    profile = get_doc(USERS_COL, existing.uid)
+    if not profile:
+        set_doc(USERS_COL, existing.uid, {
+            "uid": existing.uid,
+            "email": email,
+            "display_name": display_name or existing.display_name or "",
+            "role": "admin",
+            "is_active": True,
+        })
+
+    return success_response(
+        data={"uid": existing.uid, "email": email},
+        message="Account already exists. Signing you in.",
+        status_code=200,
+    )
+
+
+def _password_matches(email: str, password: str) -> bool:
+    api_key = _get_firebase_web_api_key()
+    if not api_key:
+        return False
+    url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
+    try:
+        resp = requests.post(
+            url,
+            json={"email": email, "password": password, "returnSecureToken": True},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        logger.error(f"Could not verify existing account: {exc}")
+        return False
+    return resp.ok
 
 
 def _get_firebase_web_api_key():

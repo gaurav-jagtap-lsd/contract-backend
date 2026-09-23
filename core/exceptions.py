@@ -47,7 +47,11 @@ def success_response(data=None, message="Success", status_code=200):
 
 
 def error_response(message="An error occurred.", status_code=400, detail=None):
-    payload = {"success": False, "error": {"message": message, "code": status_code}}
+    payload = {
+        "success": False,
+        "message": message,
+        "error": {"message": message, "code": status_code},
+    }
     if detail:
         payload["error"]["detail"] = detail
     return Response(payload, status=status_code)
