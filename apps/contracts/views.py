@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from core.exceptions import success_response, error_response
-from core.roles import require
+from core.roles import actor_name, person_name, require, user_directory
 from core.audit_service import log_action, get_client_ip, ACTIONS
 from core.firestore_utils import (
     create_doc, get_doc, update_doc, delete_doc,
@@ -27,6 +27,33 @@ PIPELINE_STEPS = (
     "Signed",
 )
 DEFAULT_PIPELINE_STEP = "Initiated"
+
+
+def _person(directory: dict, uid: str, stored: str = "") -> str:
+    if not uid and not stored:
+        return ""
+    return person_name(directory.get(uid), stored)
+
+
+def _annotate_contract(contract: dict, directory: dict) -> dict:
+    contract["created_by_name"] = _person(directory, contract.get("owner_uid", ""), contract.get("created_by_name", ""))
+    contract["updated_by_name"] = _person(directory, contract.get("updated_by", ""), contract.get("updated_by_name", ""))
+    contract["pipeline_updated_by_name"] = _person(
+        directory,
+        contract.get("pipeline_updated_by", ""),
+        contract.get("pipeline_updated_by_name", ""),
+    )
+    return contract
+
+
+def _annotate_comment(comment: dict, directory: dict) -> dict:
+    uid = comment.get("author") or comment.get("owner_uid") or ""
+    stored = comment.get("author_name") or ""
+    if stored and stored != uid:
+        comment["author_name"] = _person(directory, uid, stored)
+    else:
+        comment["author_name"] = _person(directory, uid, "")
+    return comment
 
 
 import re
@@ -178,6 +205,7 @@ class ContractListCreateView(APIView):
             )
             client_by_id = {cl["id"]: cl for cl in clients}
 
+        directory = user_directory()
         # Enrich with live status and days remaining
         result = []
         for c in contracts:
@@ -191,6 +219,7 @@ class ContractListCreateView(APIView):
                 continue
             if not c.get("pipeline_step"):
                 c["pipeline_step"] = DEFAULT_PIPELINE_STEP
+            _annotate_contract(c, directory)
             result.append(serialize_firestore_doc(c))
 
         return success_response(data={"contracts": result, "total": len(result)})
@@ -229,6 +258,7 @@ class ContractListCreateView(APIView):
         if not client or client.get("is_deleted"):
             return error_response("Client not found.", 404)
 
+        who = actor_name(uid, getattr(request.user, "email", ""))
         service_name = data.get("service_name", "").strip()
         service_type = data.get("service_type", "").strip()
         if not service_name and services and isinstance(services[0], dict):
@@ -276,6 +306,7 @@ class ContractListCreateView(APIView):
                 if data.get("pipeline_step") in PIPELINE_STEPS
                 else DEFAULT_PIPELINE_STEP
             ),
+            "created_by_name": who,
         }
 
         contract = create_doc(CONTRACTS_COL, payload)
@@ -312,6 +343,7 @@ class ContractDetailView(APIView):
         contract["computed_status"] = _resolve_status(contract)
         if not contract.get("pipeline_step"):
             contract["pipeline_step"] = DEFAULT_PIPELINE_STEP
+        _annotate_contract(contract, user_directory())
 
         # Get signed URL if file exists
         if contract.get("storage_path"):
@@ -344,6 +376,14 @@ class ContractDetailView(APIView):
 
         if "pipeline_step" in updates and updates["pipeline_step"] not in PIPELINE_STEPS:
             return error_response("Invalid pipeline_step.")
+
+        who = actor_name(uid, getattr(request.user, "email", ""))
+        updates["updated_by"] = uid
+        updates["updated_by_name"] = who
+        if "pipeline_step" in updates and updates["pipeline_step"] != contract.get("pipeline_step"):
+            updates["pipeline_updated_by"] = uid
+            updates["pipeline_updated_by_name"] = who
+            updates["pipeline_updated_at"] = now_utc().isoformat()
 
         if "client_id" in updates and updates["client_id"] != contract.get("client_id"):
             client = get_doc(CLIENTS_COL, updates["client_id"])
@@ -387,6 +427,7 @@ class ContractDetailView(APIView):
             ip_address=get_client_ip(request),
         )
         updated = get_doc(CONTRACTS_COL, contract_id)
+        _annotate_contract(updated, user_directory())
         return success_response(data={"contract": serialize_firestore_doc(updated)})
 
     def delete(self, request, contract_id):
@@ -723,8 +764,9 @@ class ContractCommentsView(APIView):
             filters=[("contract_id", "==", contract_id)],
         )
 
+        directory = user_directory()
         serialized = [
-            serialize_firestore_doc(c)
+            serialize_firestore_doc(_annotate_comment(c, directory))
             for c in comments
         ]
         serialized.sort(key=lambda c: str(c.get("created_at") or ""), reverse=True)
@@ -753,6 +795,7 @@ class ContractCommentsView(APIView):
         # Use explicit UTC ISO strings instead of SERVER_TIMESTAMP so the
         # returned comment dict is immediately JSON-serializable.
         ts = now_utc().isoformat()
+        who = actor_name(uid, getattr(request.user, "email", ""))
         db = get_firestore_client()
         data = {
             "contract_id": contract_id,
@@ -760,6 +803,7 @@ class ContractCommentsView(APIView):
             "contract_name": contract.get("contract_name", ""),
             "text": text,
             "author": uid,
+            "author_name": who,
             "created_at": ts,
             "updated_at": ts,
         }

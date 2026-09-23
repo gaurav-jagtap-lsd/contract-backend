@@ -9,6 +9,7 @@ from core.roles import (
     assign_role,
     ensure_user_profile,
     protected_admin_emails,
+    remove_user,
     require,
     sync_bootstrap_accounts,
 )
@@ -91,6 +92,9 @@ class LoginView(APIView):
             get_firebase_app()
             decoded = firebase_auth.verify_id_token(id_token)
             uid = decoded["uid"]
+            existing = get_doc(USERS_COL, uid)
+            if existing and existing.get("is_deleted"):
+                return error_response("This account has been removed. Contact an administrator.", 403)
 
             user_profile = ensure_user_profile(
                 uid,
@@ -157,6 +161,8 @@ class UserListView(APIView):
         cleaned = []
         protected = protected_admin_emails()
         for user in users:
+            if user.get("is_deleted"):
+                continue
             email = (user.get("email") or "").strip().lower()
             cleaned.append(serialize_firestore_doc({
                 "uid": user.get("uid") or user.get("id"),
@@ -190,6 +196,23 @@ class UserRoleView(APIView):
             ip_address=get_client_ip(request),
         )
         return success_response(message="Role updated.")
+
+    def delete(self, request, uid):
+        denied = require(request, "manage_users")
+        if denied:
+            return denied
+        failed = remove_user(request.user.uid, uid)
+        if failed:
+            return failed
+        log_action(
+            user_uid=request.user.uid,
+            action=ACTIONS["DELETE"],
+            resource_type="user",
+            resource_id=uid,
+            description="Removed a user account",
+            ip_address=get_client_ip(request),
+        )
+        return success_response(message="User removed.")
 
 
 class SendPasswordResetView(APIView):

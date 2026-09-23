@@ -6,7 +6,7 @@ from django.conf import settings
 from firebase_admin import auth as firebase_auth
 
 from core.firebase import get_firebase_app
-from core.firestore_utils import USERS_COL, get_doc, serialize_firestore_doc, set_doc
+from core.firestore_utils import USERS_COL, get_doc, query_collection, serialize_firestore_doc, set_doc, update_doc
 
 logger = logging.getLogger(__name__)
 
@@ -125,4 +125,53 @@ def assign_role(actor_email: str, actor_uid: str, target_uid: str, new_role: str
     target["role"] = new_role
     target["role_customized"] = True
     set_doc(USERS_COL, target_uid, target)
+    return None
+
+
+def person_name(profile: dict | None, fallback: str = "") -> str:
+    """A readable name. Display name first, then email, so a blank profile still identifies the person."""
+    if profile:
+        name = (profile.get("display_name") or "").strip()
+        email = (profile.get("email") or "").strip()
+        if name:
+            return name
+        if email:
+            return email
+    return fallback or "Unknown"
+
+
+def user_directory() -> dict:
+    directory = {}
+    for user in query_collection(USERS_COL):
+        uid = user.get("uid") or user.get("id")
+        if uid:
+            directory[uid] = user
+    return directory
+
+
+def actor_name(uid: str, email: str = "") -> str:
+    return person_name(get_doc(USERS_COL, uid), email or "Unknown")
+
+
+def remove_user(actor_uid: str, target_uid: str):
+    """Delete the login and keep a hidden profile so older comments still show their name."""
+    from core.exceptions import error_response
+    if actor_uid == target_uid:
+        return error_response("You cannot delete your own account.", 403)
+    target = get_doc(USERS_COL, target_uid)
+    if not target or target.get("is_deleted"):
+        return error_response("User not found.", 404)
+    if normalize_email(target.get("email", "")) in protected_admin_emails():
+        return error_response("This administrator cannot be removed.", 403)
+
+    try:
+        get_firebase_app()
+        firebase_auth.delete_user(target_uid)
+    except firebase_auth.UserNotFoundError:
+        pass
+    except Exception:
+        logger.exception("Could not delete Firebase user %s", target_uid)
+        return error_response("We could not remove that account. Please try again.", 500)
+
+    update_doc(USERS_COL, target_uid, {"is_deleted": True, "is_active": False})
     return None

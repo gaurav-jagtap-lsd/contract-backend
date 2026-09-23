@@ -44,9 +44,13 @@ class FirebaseAuthentication(BaseAuthentication):
         except Exception as exc:
             raise AuthenticationFailed(f"Authentication failed: {str(exc)}")
 
+        profile = get_doc(USERS_COL, decoded_token["uid"])
+        if profile and profile.get("is_deleted"):
+            raise AuthenticationFailed("This account has been removed.")
+
         user = FirebaseUser(
             decoded_token,
-            resolve_role(decoded_token.get("email", ""), get_doc(USERS_COL, decoded_token["uid"])),
+            resolve_role(decoded_token.get("email", ""), profile),
         )
         return (user, token)
 
