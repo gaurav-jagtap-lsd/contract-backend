@@ -74,6 +74,7 @@ class LoginView(APIView):
 
     def post(self, request):
         id_token = request.data.get("id_token", "")
+        display_name = (request.data.get("display_name") or "").strip()
         if not id_token:
             return error_response("id_token is required.")
 
@@ -88,10 +89,13 @@ class LoginView(APIView):
                 user_profile = {
                     "uid": uid,
                     "email": decoded.get("email", ""),
-                    "display_name": firebase_user.display_name or "",
+                    "display_name": display_name or firebase_user.display_name or "",
                     "role": "admin",
                     "is_active": True,
                 }
+                set_doc(USERS_COL, uid, user_profile)
+            elif display_name and not user_profile.get("display_name"):
+                user_profile["display_name"] = display_name
                 set_doc(USERS_COL, uid, user_profile)
 
             log_action(
@@ -175,13 +179,13 @@ class SendPasswordResetView(APIView):
 
 
 def _register_existing_user(email: str, password: str, display_name: str):
-    """A previous attempt may have created the Firebase user before the form finished.
-
-    If this password matches that account, finish the profile and let the client sign in.
-    """
-    if not _password_matches(email, password):
+    """Finish signup when Firebase already has this email and the password matches."""
+    password_ok = _password_matches(email, password)
+    if password_ok is None:
+        return error_response("We could not create your account. Please try again.", 500)
+    if not password_ok:
         return error_response(
-            "An account with this email already exists. Sign in instead.",
+            "This email is already registered. Sign in instead.",
             409,
         )
 
@@ -206,10 +210,12 @@ def _register_existing_user(email: str, password: str, display_name: str):
     )
 
 
-def _password_matches(email: str, password: str) -> bool:
+def _password_matches(email: str, password: str):
+    """True if the password matches, False if it does not, None if we could not check."""
     api_key = _get_firebase_web_api_key()
     if not api_key:
-        return False
+        logger.error("FIREBASE_WEB_API_KEY is not set; cannot verify an existing account.")
+        return None
     url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
     try:
         resp = requests.post(
@@ -219,8 +225,18 @@ def _password_matches(email: str, password: str) -> bool:
         )
     except requests.RequestException as exc:
         logger.error(f"Could not verify existing account: {exc}")
+        return None
+    if resp.ok:
+        return True
+    try:
+        message = resp.json().get("error", {}).get("message", "")
+    except ValueError:
+        message = ""
+    code = message.split(":", 1)[0]
+    logger.info("Existing account check returned %s", code or resp.status_code)
+    if code in ("INVALID_PASSWORD", "INVALID_LOGIN_CREDENTIALS"):
         return False
-    return resp.ok
+    return None
 
 
 def _get_firebase_web_api_key():
