@@ -42,6 +42,19 @@ class ClientListCreateView(APIView):
         if not client_name:
             return error_response("client_name is required.")
 
+        wanted = " ".join(client_name.split()).casefold()
+        existing_clients = query_collection(
+            CLIENTS_COL, filters=[("is_deleted", "==", False)],
+        )
+        for existing in existing_clients:
+            current = " ".join((existing.get("client_name") or "").split()).casefold()
+            if current == wanted:
+                from core.firestore_utils import serialize_firestore_doc
+                return success_response(
+                    data={"client": serialize_firestore_doc(existing)},
+                    message="Using the existing client.",
+                )
+
         cc_emails = data.get("cc_emails", [])
         if isinstance(cc_emails, str):
             cc_emails = [e.strip() for e in cc_emails.split(",") if e.strip()]
