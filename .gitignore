@@ -9,3 +9,6 @@ venv/
 .venv/
 .pytest_cache/
 .DS_Store
+credentials/
+*.py[cod]
+*.pem
